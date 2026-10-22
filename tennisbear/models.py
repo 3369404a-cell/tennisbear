@@ -18,6 +18,8 @@ class Event:
     prefecture: str = ""
     city: str = ""
     venue: str = ""
+    place_code: str = ""
+    weekend_or_holiday: bool | None = None  # テニスベア側の土日祝フラグ
     level_min: int | None = None  # ベアレベル 1〜9
     level_max: int | None = None
     description: str = ""
@@ -27,6 +29,10 @@ class Event:
     remaining: int | None = None  # 残り枠
     organizer_age_decade: int | None = None  # 20, 30, ...
     participant_age_decades: list[int] = field(default_factory=list)
+    participant_levels: list[int] = field(default_factory=list)  # 参加者のベアレベル
+    participants: int | None = None  # 現在の参加人数
+    men: int | None = None
+    women: int | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)

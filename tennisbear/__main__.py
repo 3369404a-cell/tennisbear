@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,8 @@ def main(argv: list[str] | None = None) -> None:
 
     f = sub.add_parser("fetch")
     f.add_argument("--out", type=Path, default=Path("data/events.json"))
+    f.add_argument("--places", type=Path, default=Path("data/places.json"),
+                   help="過去の実行で見つかった会場コードの保存先")
 
     b = sub.add_parser("build")
     b.add_argument("--events", type=Path, default=Path("data/events.json"))
@@ -52,8 +55,11 @@ def main(argv: list[str] | None = None) -> None:
     now = datetime.now(JST).replace(tzinfo=None)
 
     if args.cmd == "fetch":
-        events = fetch_events(prefs)
+        known = json.loads(args.places.read_text()) if args.places.exists() else []
+        events, places = fetch_events(prefs, now, known_places=known)
         save_events(events, args.out)
+        args.places.parent.mkdir(parents=True, exist_ok=True)
+        args.places.write_text(json.dumps(places[:300], ensure_ascii=False))
         print(f"{len(events)}件を {args.out} に保存しました")
     elif args.cmd == "build":
         recs = recommend(load_events(args.events), prefs, now)
@@ -68,9 +74,13 @@ def main(argv: list[str] | None = None) -> None:
             top_n=args.top,
         )
         for r in recommend(load_events(args.events), prefs, now):
-            v = to_view(r)
+            v = to_view(r, prefs)
             print(f"[{r.score:>3}] {v['when']}  {v['title']}")
             print(f"      {v['where']}  {' / '.join(v['reasons'])}")
+            for line in v["people"]:
+                print(f"      {line}")
+            if v["comment"]:
+                print(f"      → {v['comment']}")
             print(f"      {v['url']}")
 
 

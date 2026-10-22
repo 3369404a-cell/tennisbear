@@ -2,8 +2,10 @@
 
 - robots.txt で /api/ が禁止されているため、公開 HTML ページだけを読む。
 - robots.txt の Crawl-delay: 10 に合わせ、リクエスト間隔を10秒空ける。
-- 一覧ページ（都道府県別）には開始が近い順に40件だけ載っている。
-  一覧で必須条件に合うものだけ詳細ページを開き、年代・料金・本文を取る。
+- 都道府県別の一覧には開始が近い順に40件だけしか載らないため、
+  会場ごとの一覧（/place/{コード}/events）も巡回して先の日程を拾う。
+  巡回する会場は設定の places と、都道府県一覧で見つかった会場。
+- 一覧で必須条件に合うものだけ詳細ページを開き、参加者・料金・本文を取る。
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pathlib import Path
 
 from .models import Event
 from .preferences import Preferences
-from .scoring import level_distance, passes_list_filters
+from .scoring import level_distance, passes_list_filters, title_hits
 
 BASE = "https://www.tennisbear.net"
 USER_AGENT = "Mozilla/5.0 (compatible; personal-event-digest)"
@@ -84,6 +86,16 @@ AGE_COUNT_KEYS = {
     "aboutAgeFortyCount": 40, "aboutAgeFiftyCount": 50, "aboutAgeSixtyCount": 60,
     "aboutAgeSeventyCount": 70,
 }
+LEVEL_COUNT_KEYS = {
+    f"level{name}Count": lv
+    for lv, name in enumerate(
+        ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"], start=1
+    )
+}
+
+
+def _expand(counts: dict, keys: dict[str, int]) -> list[int]:
+    return [value for key, value in keys.items() for _ in range(counts.get(key) or 0)]
 
 
 def event_from_list_item(item: dict) -> Event:
@@ -98,6 +110,8 @@ def event_from_list_item(item: dict) -> Event:
         prefecture=prefecture,
         city=_city(address, prefecture),
         venue=place.get("name", ""),
+        place_code=str(place.get("code") or ""),
+        weekend_or_holiday=item.get("weekendOrHolidayFlg"),
         level_min=(item.get("minLevel") or {}).get("id"),
         level_max=(item.get("maxLevel") or {}).get("id"),
     )
@@ -109,13 +123,17 @@ def apply_detail(event: Event, detail: dict) -> Event:
     event.tags = [t["name"] for t in detail.get("eventTagList") or []]
     event.fee = detail.get("priceOverview")
     event.capacity = detail.get("maxParticipantsNumber")
-    if event.capacity is not None and detail.get("nowParticipantsNumber") is not None:
-        event.remaining = event.capacity - detail["nowParticipantsNumber"]
+    event.participants = detail.get("nowParticipantsNumber")
+    if event.capacity is not None and event.participants is not None:
+        event.remaining = event.capacity - event.participants
     event.organizer_age_decade = _decade(((detail.get("organizer") or {}).get("age") or {}).get("name"))
-    ages = ((detail.get("participantInfo") or {}).get("aboutAgeInfo")) or {}
-    event.participant_age_decades = [
-        decade for key, decade in AGE_COUNT_KEYS.items() for _ in range(ages.get(key) or 0)
-    ]
+    info = detail.get("participantInfo") or {}
+    event.participant_age_decades = _expand(info.get("aboutAgeInfo") or {}, AGE_COUNT_KEYS)
+    event.participant_levels = _expand(info.get("levelInfo") or {}, LEVEL_COUNT_KEYS)
+    gender = info.get("genderInfo") or {}
+    event.men, event.women = gender.get("menCount"), gender.get("womenCount")
+    if detail.get("weekendOrHolidayFlg") is not None:
+        event.weekend_or_holiday = detail["weekendOrHolidayFlg"]
     if detail.get("isAfterDeadline"):
         event.remaining = 0
     return event
@@ -133,32 +151,82 @@ def is_open_practice(item: dict) -> bool:
 
 
 def list_items(state: dict) -> list[dict]:
-    return state["state"]["feature"]["event"]["eventSearch"]["EventList"]["eventList"]
+    """ページ内のイベント一覧の項目を集める。
+
+    都道府県一覧と会場一覧でストアの場所が違うため、一覧項目の形
+    （id・eventTitle・startDatetimeString を持つ）で探す。
+    """
+    found: dict[object, dict] = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            if "eventTitle" in o and "startDatetimeString" in o and "id" in o:
+                found.setdefault(o["id"], o)
+                return
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(state.get("state", state))
+    return list(found.values())
 
 
 def detail_of(state: dict) -> dict:
     return state["state"]["feature"]["event"]["eventDetail"]["EventDetail"]["event"]
 
 
-def fetch_events(prefs: Preferences, client: Client | None = None) -> list[Event]:
+def _page_items(client: Client, path: str) -> list[dict]:
+    try:
+        return list_items(nuxt_state(client.get(path)))
+    except Exception as e:  # 1ページの失敗で全体を止めない
+        print(f"取得に失敗: {path}: {e}", file=sys.stderr)
+        return []
+
+
+def fetch_events(
+    prefs: Preferences,
+    now: datetime,
+    client: Client | None = None,
+    known_places: list[str] | None = None,
+) -> tuple[list[Event], list[str]]:
+    """イベントと、今回までに見つかった会場コード（新しい順）を返す。"""
     client = client or Client()
-    candidates: list[Event] = []
+    items: dict[str, dict] = {}
+    seen_places: list[str] = []
+
     for name in prefs.prefectures:
         code = PREFECTURE_CODES.get(name)
         if not code:
             print(f"未対応の都道府県名: {name}", file=sys.stderr)
             continue
-        items = list_items(nuxt_state(client.get(f"/event/prefecture/{code}")))
-        print(f"{name}: 一覧 {len(items)}件", file=sys.stderr)
-        for item in items:
-            if not is_open_practice(item):
-                continue
-            event = event_from_list_item(item)
-            if passes_list_filters(event, prefs):
-                candidates.append(event)
+        page = _page_items(client, f"/event/prefecture/{code}")
+        print(f"{name}: 一覧 {len(page)}件", file=sys.stderr)
+        for item in page:
+            items.setdefault(str(item["id"]), item)
+            place = item.get("place") or {}
+            prefecture = ((place.get("area") or {}).get("prefecture") or {}).get("name")
+            if place.get("code") and prefecture in prefs.prefectures:
+                seen_places.append(str(place["code"]))
 
-    # 詳細ページは上限件数まで。レベルが希望に近く、開始が早いものから開く
-    candidates.sort(key=lambda e: (level_distance(e, prefs), e.start))
+    places = list(dict.fromkeys(prefs.places + seen_places + (known_places or [])))
+    for code in places[: prefs.max_places]:
+        page = _page_items(client, f"/place/{code}/events")
+        print(f"会場 {code}: {len(page)}件", file=sys.stderr)
+        for item in page:
+            items.setdefault(str(item["id"]), item)
+
+    candidates = []
+    for item in items.values():
+        if not is_open_practice(item) or not item.get("startDatetimeString"):
+            continue
+        event = event_from_list_item(item)
+        if passes_list_filters(event, prefs, now):
+            candidates.append(event)
+
+    # 詳細ページは上限件数まで。名前がラリー・練習系、レベルが近い、開始が早い順に開く
+    candidates.sort(key=lambda e: (not title_hits(e, prefs), level_distance(e, prefs), e.start))
     events: list[Event] = []
     for event in candidates[: prefs.max_details]:
         try:
@@ -167,5 +235,6 @@ def fetch_events(prefs: Preferences, client: Client | None = None) -> list[Event
             print(f"詳細の取得に失敗: {event.url}: {e}", file=sys.stderr)
             continue
         events.append(apply_detail(event, detail))
-    print(f"候補 {len(candidates)}件 / 詳細取得 {len(events)}件", file=sys.stderr)
-    return events
+    print(f"一覧 {len(items)}件 / 候補 {len(candidates)}件 / 詳細取得 {len(events)}件", file=sys.stderr)
+    places_out = list(dict.fromkeys(seen_places + (known_places or [])))
+    return events, places_out

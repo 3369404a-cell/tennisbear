@@ -3,7 +3,7 @@ name: daily-recommendations
 on:
   workflow_dispatch:
   schedule:
-    - cron: "45 21 * * *" # 毎朝 6:45 JST に開始し、7時ごろまでに更新を終える
+    - cron: "25 21 * * *" # 毎朝 6:25 JST に開始（巡回に最大20分強）し、7時ごろまでに更新を終える
 
 concurrency:
   group: pages
@@ -23,6 +23,12 @@ jobs:
         with:
           node-version: "22"
       - run: python -m unittest discover -s tests -t .
+      # 過去の実行で見つかった会場コードを引き継ぐ
+      - uses: actions/cache@v4
+        with:
+          path: data/places.json
+          key: places-${{ github.run_id }}
+          restore-keys: places-
       - run: python -m tennisbear fetch --out data/events.json
       - run: python -m tennisbear build --events data/events.json --out site/index.html
       - uses: actions/upload-pages-artifact@v3
