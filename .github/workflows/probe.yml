@@ -29,23 +29,25 @@ jobs:
           get $B/event/1687562/info detail.html
           for f in list list_date list_page2 detail; do node nuxt.js $f.html > $f.json; done
           python3 - <<'PY'
-          import json, re
-          def walk(o, path=""):
+          import json
+          def find(o, key, path=""):
               if isinstance(o, dict):
-                  for k, v in o.items(): yield from walk(v, f"{path}.{k}")
-              elif isinstance(o, list) and o:
-                  yield path, o
-                  yield from walk(o[0], path + "[0]")
+                  for k, v in o.items():
+                      if k == key: yield path + "." + k, v
+                      yield from find(v, key, path + "." + k)
+              elif isinstance(o, list):
+                  for i, v in enumerate(o[:1]): yield from find(v, key, f"{path}[{i}]")
           for f in ["list", "list_date", "list_page2"]:
               d = json.load(open(f + ".json"))
-              print("#####", f, "fetch keys:", list(d["fetch"].keys()))
-              lists = [(p, v) for p, v in walk(d) if isinstance(v[0], dict) and ("startDatetime" in v[0] or "eventId" in v[0] or "title" in v[0]) and "advertising" not in p]
-              for p, v in lists:
-                  print(p, len(v), "first start:", v[0].get("startDatetime"), "last:", v[-1].get("startDatetime"))
-              if f == "list" and lists:
-                  print("--- sample list item:"); print(json.dumps(lists[0][1][0], ensure_ascii=False, indent=1)[:4000])
+              for p, v in find(d, "eventList"):
+                  if v:
+                      print("#####", f, p, len(v), [e.get("startDatetime") or e.get("startDateTime") for e in (v[0], v[-1])])
+                      if f == "list": print(json.dumps(v[0], ensure_ascii=False, indent=1)[:5000])
+              for k in ["eventListCountAll", "isFinished", "page", "searchParam", "searchCondition"]:
+                  for p, v in find(d, k):
+                      if "event" in p.lower() and "beach" not in p.lower() and "pickle" not in p.lower(): print(f, p, json.dumps(v, ensure_ascii=False)[:800])
           d = json.load(open("detail.json"))
-          st = {k: v for k, v in d["state"].items() if k != "global"}
-          print("##### detail state (non-global):"); print(json.dumps(st, ensure_ascii=False, indent=1)[:12000])
-          print("##### detail data/fetch:"); print(json.dumps({"data": d["data"], "fetch": d["fetch"]}, ensure_ascii=False)[:6000])
+          ev = d["state"]["feature"]["event"]["eventDetail"]["EventDetail"]
+          ev["event"].pop("eventContents", None)
+          print("##### detail EventDetail:"); print(json.dumps(ev, ensure_ascii=False, indent=1)[:15000])
           PY
