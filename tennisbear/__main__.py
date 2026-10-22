@@ -1,7 +1,7 @@
 """使い方:
 
   # テニスベアから取得 → data/events.json に保存
-  python -m tennisbear fetch
+  python -m tennisbear fetch   # node が必要
 
   # おすすめを docs/index.html に書き出す
   python -m tennisbear build --events data/events.json
@@ -52,7 +52,9 @@ def main(argv: list[str] | None = None) -> None:
     now = datetime.now(JST).replace(tzinfo=None)
 
     if args.cmd == "fetch":
-        save_events(fetch_events(prefs.prefectures), args.out)
+        events = fetch_events(prefs)
+        save_events(events, args.out)
+        print(f"{len(events)}件を {args.out} に保存しました")
     elif args.cmd == "build":
         recs = recommend(load_events(args.events), prefs, now)
         write_page(render_page(recs, prefs, now), args.out)

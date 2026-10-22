@@ -15,13 +15,11 @@ class Recommendation:
 
 
 def _text(event: Event) -> str:
-    return f"{event.title}\n{event.description}"
+    return "\n".join([event.title, " ".join(event.tags), event.description])
 
 
-def is_candidate(event: Event, prefs: Preferences, now: datetime) -> bool:
-    """必須条件。ここで落ちたイベントは一覧に出さない。"""
-    if not (now <= event.start <= now + timedelta(days=prefs.days_ahead)):
-        return False
+def passes_list_filters(event: Event, prefs: Preferences) -> bool:
+    """一覧ページの情報だけで判定できる必須条件（詳細ページを開く前に使う）。"""
     if prefs.prefectures and event.prefecture not in prefs.prefectures:
         return False
     if prefs.cities and event.city not in prefs.cities:
@@ -29,15 +27,24 @@ def is_candidate(event: Event, prefs: Preferences, now: datetime) -> bool:
     if prefs.levels and event.level_min is not None and event.level_max is not None:
         if not any(event.level_min <= lv <= event.level_max for lv in prefs.levels):
             return False
-    if event.remaining is not None and event.remaining <= 0:
-        return False
-    if prefs.max_fee and event.fee is not None and event.fee > prefs.max_fee:
-        return False
     if prefs.weekdays and event.start.weekday() not in prefs.weekdays:
         return False
     if prefs.start_after and event.start.time() < prefs.start_after:
         return False
     if prefs.start_before and event.start.time() > prefs.start_before:
+        return False
+    return True
+
+
+def is_candidate(event: Event, prefs: Preferences, now: datetime) -> bool:
+    """必須条件。ここで落ちたイベントは一覧に出さない。"""
+    if not (now <= event.start <= now + timedelta(days=prefs.days_ahead)):
+        return False
+    if not passes_list_filters(event, prefs):
+        return False
+    if event.remaining is not None and event.remaining <= 0:
+        return False
+    if prefs.max_fee and event.fee is not None and event.fee > prefs.max_fee:
         return False
     text = _text(event)
     if any(k in text for k in prefs.exclude_keywords):

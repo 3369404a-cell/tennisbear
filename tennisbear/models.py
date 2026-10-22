@@ -21,6 +21,7 @@ class Event:
     level_min: int | None = None  # ベアレベル 1〜9
     level_max: int | None = None
     description: str = ""
+    tags: list[str] = field(default_factory=list)  # 例: 練習多め, シングルス
     fee: int | None = None  # 円
     capacity: int | None = None
     remaining: int | None = None  # 残り枠

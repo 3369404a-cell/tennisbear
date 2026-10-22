@@ -11,15 +11,23 @@
 ## コマンド
 
 ```sh
-python -m tennisbear fetch                          # テニスベアから取得 → data/events.json（未実装）
+python -m tennisbear fetch                          # テニスベアから取得 → data/events.json
 python -m tennisbear build                          # おすすめページを docs/index.html に生成
 python -m tennisbear suggest --keyword 球出し --pref 神奈川県   # その場の条件で提案を表示
 python -m unittest discover -s tests -t .           # テスト
 ```
 
-Python 3.11 以上、外部ライブラリ不要。
+Python 3.11 以上と Node.js が必要です（外部ライブラリは不要）。
+
+## 取得のしかた
+
+- 公開ページ（都道府県別の一覧 `/event/prefecture/prefNN` と詳細 `/event/{id}/info`）だけを読みます。robots.txt で禁止されている `/api/` は使いません。
+- robots.txt の `Crawl-delay: 10` に合わせ、リクエストは10秒間隔です。
+- ページ内の `window.__NUXT__` に入っている構造化データを Node の vm で取り出しています。
+- 一覧ページに載るのは開始が近い順の40件だけなので、取れるのは「近いうちに始まるイベント」に限られます。
 
 ## 毎日の更新
 
-`.github/workflows/daily.yml` が取得 → 生成 → GitHub Pages へ公開を行います。
-取得処理（`tennisbear/fetch.py`）の実装後に schedule を有効にし、リポジトリの Settings → Pages で Source を「GitHub Actions」にしてください。
+`.github/workflows/daily.yml` が毎朝 7:13（日本時間）に取得 → 生成 → GitHub Pages へ公開します。
+動かすには、このワークフローがデフォルトブランチ（main）にあることと、リポジトリの Settings → Pages で Source を「GitHub Actions」にすることが必要です。
+Actions タブの「Run workflow」から手動でも実行できます。

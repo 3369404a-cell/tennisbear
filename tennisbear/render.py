@@ -140,7 +140,7 @@ def to_view(r: Recommendation) -> dict:
         "where": where,
         "info": _info(r),
         "reasons": r.reasons,
-        "haystack": "\n".join([e.title, e.description, where, when]),
+        "haystack": "\n".join([e.title, " ".join(e.tags), e.description, where, when]),
     }
 
 
