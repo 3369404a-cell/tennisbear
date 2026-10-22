@@ -23,6 +23,9 @@ class Preferences:
     start_before: time | None = None
     max_fee: int = 0
     top_n: int = 30
+    level_tolerance: int = 1
+    max_misses: int = 2
+    max_details: int = 80
 
 
 def _parse_time(s: str) -> time | None:
@@ -46,4 +49,7 @@ def load_preferences(path: Path = DEFAULT_PATH) -> Preferences:
         start_before=_parse_time(get("schedule", "start_before", "")),
         max_fee=get("budget", "max_fee", 0),
         top_n=get("output", "top_n", 30),
+        level_tolerance=get("near_match", "level_tolerance", 1),
+        max_misses=get("near_match", "max_misses", 2),
+        max_details=get("fetch", "max_details", 80),
     )

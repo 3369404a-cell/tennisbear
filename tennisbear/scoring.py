@@ -12,6 +12,18 @@ class Recommendation:
     event: Event
     score: int
     reasons: list[str] = field(default_factory=list)
+    misses: list[str] = field(default_factory=list)  # 満たしていない希望条件
+
+    @property
+    def exact(self) -> bool:
+        return not self.misses
+
+
+def level_distance(event: Event, prefs: Preferences) -> int:
+    """希望レベルとイベント対象レベルの離れ具合。重なっていれば0。不明も0扱い。"""
+    if not prefs.levels or event.level_min is None or event.level_max is None:
+        return 0
+    return min(max(event.level_min - lv, lv - event.level_max, 0) for lv in prefs.levels)
 
 
 def _text(event: Event) -> str:
@@ -24,9 +36,8 @@ def passes_list_filters(event: Event, prefs: Preferences) -> bool:
         return False
     if prefs.cities and event.city not in prefs.cities:
         return False
-    if prefs.levels and event.level_min is not None and event.level_max is not None:
-        if not any(event.level_min <= lv <= event.level_max for lv in prefs.levels):
-            return False
+    if level_distance(event, prefs) > prefs.level_tolerance:
+        return False
     if prefs.weekdays and event.start.weekday() not in prefs.weekdays:
         return False
     if prefs.start_after and event.start.time() < prefs.start_after:
@@ -56,28 +67,42 @@ def score(event: Event, prefs: Preferences) -> Recommendation:
     text = _text(event)
     points = 0
     reasons: list[str] = []
+    misses: list[str] = []
+
+    if level_distance(event, prefs):
+        misses.append(f"Lv{event.level_min}〜{event.level_max}（希望Lv{'・'.join(map(str, prefs.levels))}）")
 
     hits = [k for k in prefs.prefer_keywords if k in text]
     if hits:
         points += 10 * len(hits)
         reasons.append("・".join(hits))
+    elif prefs.prefer_keywords:
+        misses.append("練習系の記載なし")
 
     avoids = [k for k in prefs.avoid_keywords if k in text]
     points -= 15 * len(avoids)
 
     decades = set(prefs.preferred_age_decades)
-    if decades and event.organizer_age_decade in decades:
-        points += 15
-        reasons.append(f"主催{event.organizer_age_decade}代")
+    age_known = age_ok = False
+    if decades and event.organizer_age_decade is not None:
+        age_known = True
+        if event.organizer_age_decade in decades:
+            age_ok = True
+            points += 15
+            reasons.append(f"主催{event.organizer_age_decade}代")
     if decades and event.participant_age_decades:
+        age_known = True
         share = sum(d in decades for d in event.participant_age_decades) / len(
             event.participant_age_decades
         )
         points += round(20 * share)
         if share >= 0.5:
+            age_ok = True
             reasons.append("参加者20〜30代中心" if decades == {20, 30} else "参加者の年代が近い")
+    if age_known and not age_ok:
+        misses.append("年代が希望と違う")
 
-    if event.level_min is not None and event.level_max is not None and prefs.levels:
+    if event.level_min is not None and event.level_max is not None and not level_distance(event, prefs):
         # 対象レベルの幅が狭く、希望レベルにぴったりなほど加点
         width = event.level_max - event.level_min + 1
         points += max(0, 6 - width)
@@ -86,10 +111,13 @@ def score(event: Event, prefs: Preferences) -> Recommendation:
     if event.remaining is not None and event.remaining <= 2:
         reasons.append(f"残り{event.remaining}枠")
 
-    return Recommendation(event=event, score=points, reasons=reasons)
+    points -= 20 * len(misses)
+    return Recommendation(event=event, score=points, reasons=reasons, misses=misses)
 
 
 def recommend(events: list[Event], prefs: Preferences, now: datetime) -> list[Recommendation]:
+    """完全一致を先に、続いて外れている条件が max_misses 個以内の近い候補を並べる。"""
     recs = [score(e, prefs) for e in events if is_candidate(e, prefs, now)]
-    recs.sort(key=lambda r: (-r.score, r.event.start))
+    recs = [r for r in recs if len(r.misses) <= prefs.max_misses]
+    recs.sort(key=lambda r: (not r.exact, -r.score, r.event.start))
     return recs[: prefs.top_n]

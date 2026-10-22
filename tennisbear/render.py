@@ -47,6 +47,9 @@ input[type=search] { width: 100%; padding: 10px 12px; border-radius: 10px; borde
 .tags span { background: var(--chip); border-radius: 6px; padding: 2px 8px; font-size: .78rem; }
 .apply { display: block; text-align: center; background: var(--accent); color: var(--accent-text);
   text-decoration: none; font-weight: 600; padding: 10px; border-radius: 10px; }
+.tags span.miss { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
+.section { font-size: .95rem; margin: 18px 0 8px; color: var(--muted); }
+.near .apply { background: var(--chip); color: var(--text); }
 .empty { color: var(--muted); text-align: center; padding: 32px 0; }
 </style>
 </head>
@@ -55,6 +58,7 @@ input[type=search] { width: 100%; padding: 10px 12px; border-radius: 10px; borde
   <h1>🎾 おすすめテニスイベント</h1>
   <div class="meta">__META__</div>
   <div class="filters" id="prefs"></div>
+  <div class="filters"><button id="near" aria-pressed="true">近い候補も表示</button></div>
   <input type="search" id="q" placeholder="キーワードで絞り込み（例: ラリー, 川崎, 土曜）">
   <div id="list"></div>
 </main>
@@ -63,6 +67,13 @@ const EVENTS = __DATA__;
 const list = document.getElementById("list");
 const q = document.getElementById("q");
 const prefBox = document.getElementById("prefs");
+const nearBtn = document.getElementById("near");
+let showNear = true;
+nearBtn.onclick = () => {
+  showNear = !showNear;
+  nearBtn.setAttribute("aria-pressed", String(showNear));
+  draw();
+};
 const active = new Set(EVENTS.map(e => e.prefecture).filter(Boolean));
 [...active].forEach(p => {
   const b = document.createElement("button");
@@ -83,24 +94,34 @@ function el(tag, cls, text) {
 function draw() {
   const words = q.value.trim().split(/\\s+/).filter(Boolean);
   const shown = EVENTS.filter(e =>
+    (showNear || e.exact) &&
     (!e.prefecture || active.has(e.prefecture)) &&
     words.every(w => e.haystack.includes(w)));
   list.replaceChildren();
   if (!shown.length) { list.appendChild(el("p", "empty", "条件に合うイベントがありません")); return; }
-  for (const e of shown) {
-    const c = el("article", "card");
-    c.appendChild(el("h2", null, e.title));
-    c.appendChild(el("div", "when", e.when));
-    c.appendChild(el("div", "where", e.where));
-    if (e.info) c.appendChild(el("div", "info", e.info));
-    const tags = el("div", "tags");
-    e.reasons.forEach(r => tags.appendChild(el("span", null, r)));
-    c.appendChild(tags);
-    const a = el("a", "apply", "テニスベアで申し込む");
-    a.href = e.url; a.target = "_blank"; a.rel = "noopener";
-    c.appendChild(a);
-    list.appendChild(c);
+  const exact = shown.filter(e => e.exact), near = shown.filter(e => !e.exact);
+  list.appendChild(el("h3", "section", `条件に一致（${exact.length}件）`));
+  if (!exact.length) list.appendChild(el("p", "empty", "完全に一致するイベントはありません"));
+  exact.forEach(card);
+  if (near.length) {
+    list.appendChild(el("h3", "section", `近い候補（${near.length}件）`));
+    near.forEach(card);
   }
+}
+function card(e) {
+  const c = el("article", e.exact ? "card" : "card near");
+  c.appendChild(el("h2", null, e.title));
+  c.appendChild(el("div", "when", e.when));
+  c.appendChild(el("div", "where", e.where));
+  if (e.info) c.appendChild(el("div", "info", e.info));
+  const tags = el("div", "tags");
+  e.reasons.forEach(r => tags.appendChild(el("span", null, r)));
+  e.misses.forEach(m => tags.appendChild(el("span", "miss", m)));
+  c.appendChild(tags);
+  const a = el("a", "apply", "テニスベアで申し込む");
+  a.href = e.url; a.target = "_blank"; a.rel = "noopener";
+  c.appendChild(a);
+  list.appendChild(c);
 }
 q.addEventListener("input", draw);
 draw();
@@ -140,6 +161,8 @@ def to_view(r: Recommendation) -> dict:
         "where": where,
         "info": _info(r),
         "reasons": r.reasons,
+        "misses": r.misses,
+        "exact": r.exact,
         "haystack": "\n".join([e.title, " ".join(e.tags), e.description, where, when]),
     }
 
@@ -150,7 +173,8 @@ def render_page(recs: list[Recommendation], prefs: Preferences, generated_at: da
     data = data.replace("<", "\\u003c")
     levels = "・".join(str(lv) for lv in prefs.levels) or "指定なし"
     meta = (
-        f"{generated_at:%Y/%m/%d %H:%M} 更新 ・ {len(recs)}件 ・ "
+        f"{generated_at:%Y/%m/%d %H:%M} 更新 ・ 一致{sum(r.exact for r in recs)}件"
+        f"＋近い候補{sum(not r.exact for r in recs)}件 ・ "
         f"ベアレベル{levels} ・ {'/'.join(prefs.prefectures) or '全エリア'}"
     )
     return TEMPLATE.replace("__META__", html.escape(meta)).replace("__DATA__", data)

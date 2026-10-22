@@ -33,6 +33,8 @@ class ScoringTest(unittest.TestCase):
     def test_filters_out_level_outside_5_6(self):
         self.assertFalse(is_candidate(ev(level_min=1, level_max=3), self.prefs, NOW))
         self.assertTrue(is_candidate(ev(level_min=6, level_max=8), self.prefs, NOW))
+        # 1段階ずれは近い候補として残る
+        self.assertTrue(is_candidate(ev(level_min=7, level_max=9), self.prefs, NOW))
 
     def test_filters_out_full_and_past(self):
         self.assertFalse(is_candidate(ev(remaining=0), self.prefs, NOW))
@@ -45,6 +47,24 @@ class ScoringTest(unittest.TestCase):
         recs = recommend([tournament, practice], self.prefs, NOW)
         self.assertEqual([r.event.id for r in recs], ["a", "b"])
         self.assertIn("主催30代", recs[0].reasons)
+
+    def test_near_matches_follow_exact_matches(self):
+        exact = ev(id="exact", title="ラリー練習", organizer_age_decade=30)
+        off_level = ev(id="lv", title="ラリー練習", level_min=7, level_max=9, organizer_age_decade=30)
+        game = ev(id="game", title="ダブルスゲーム会", organizer_age_decade=30)
+        far = ev(id="far", title="ラリー練習", level_min=8, level_max=9)
+        recs = recommend([game, off_level, exact, far], self.prefs, NOW)
+        self.assertEqual(recs[0].event.id, "exact")
+        self.assertTrue(recs[0].exact)
+        near = {r.event.id: r.misses for r in recs[1:]}
+        self.assertEqual(set(near), {"game", "lv"})  # Lv8〜9 は2段階ずれなので出ない
+        self.assertEqual(near["game"], ["練習系の記載なし"])
+        self.assertIn("希望Lv5・6", near["lv"][0])
+
+    def test_max_misses_zero_shows_only_exact(self):
+        self.prefs.max_misses = 0
+        recs = recommend([ev(id="a"), ev(id="b", title="ゲーム会")], self.prefs, NOW)
+        self.assertEqual([r.event.id for r in recs], ["a"])
 
     def test_render_escapes_script_tags(self):
         recs = recommend([ev(title="</script><b>x")], self.prefs, NOW)

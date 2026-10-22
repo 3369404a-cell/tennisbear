@@ -3,7 +3,7 @@ name: daily-recommendations
 on:
   workflow_dispatch:
   schedule:
-    - cron: "13 22 * * *" # 毎朝 7:13 JST
+    - cron: "45 21 * * *" # 毎朝 6:45 JST に開始し、7時ごろまでに更新を終える
 
 concurrency:
   group: pages

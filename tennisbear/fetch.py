@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .models import Event
 from .preferences import Preferences
-from .scoring import passes_list_filters
+from .scoring import level_distance, passes_list_filters
 
 BASE = "https://www.tennisbear.net"
 USER_AGENT = "Mozilla/5.0 (compatible; personal-event-digest)"
@@ -142,7 +142,7 @@ def detail_of(state: dict) -> dict:
 
 def fetch_events(prefs: Preferences, client: Client | None = None) -> list[Event]:
     client = client or Client()
-    events: list[Event] = []
+    candidates: list[Event] = []
     for name in prefs.prefectures:
         code = PREFECTURE_CODES.get(name)
         if not code:
@@ -154,12 +154,18 @@ def fetch_events(prefs: Preferences, client: Client | None = None) -> list[Event
             if not is_open_practice(item):
                 continue
             event = event_from_list_item(item)
-            if not passes_list_filters(event, prefs):
-                continue
-            try:
-                detail = detail_of(nuxt_state(client.get(f"/event/{event.id}/info")))
-            except Exception as e:  # 1件の失敗で全体を止めない
-                print(f"詳細の取得に失敗: {event.url}: {e}", file=sys.stderr)
-                continue
-            events.append(apply_detail(event, detail))
+            if passes_list_filters(event, prefs):
+                candidates.append(event)
+
+    # 詳細ページは上限件数まで。レベルが希望に近く、開始が早いものから開く
+    candidates.sort(key=lambda e: (level_distance(e, prefs), e.start))
+    events: list[Event] = []
+    for event in candidates[: prefs.max_details]:
+        try:
+            detail = detail_of(nuxt_state(client.get(f"/event/{event.id}/info")))
+        except Exception as e:  # 1件の失敗で全体を止めない
+            print(f"詳細の取得に失敗: {event.url}: {e}", file=sys.stderr)
+            continue
+        events.append(apply_detail(event, detail))
+    print(f"候補 {len(candidates)}件 / 詳細取得 {len(events)}件", file=sys.stderr)
     return events
