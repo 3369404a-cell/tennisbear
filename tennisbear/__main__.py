@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from .fetch import fetch_events
 from .models import load_events, save_events
+from .notify import notify
 from .preferences import DEFAULT_PATH, load_preferences
 from .render import render_page, to_view, write_page
 from .scoring import recommend
@@ -38,6 +39,10 @@ def main(argv: list[str] | None = None) -> None:
     b = sub.add_parser("build")
     b.add_argument("--events", type=Path, default=Path("data/events.json"))
     b.add_argument("--out", type=Path, default=Path("docs/index.html"))
+
+    n = sub.add_parser("notify")
+    n.add_argument("--events", type=Path, default=Path("data/events.json"))
+    n.add_argument("--url", required=True, help="公開ページのURL")
 
     s = sub.add_parser("suggest")
     s.add_argument("--events", type=Path, default=Path("data/events.json"))
@@ -59,6 +64,8 @@ def main(argv: list[str] | None = None) -> None:
         recs = recommend(load_events(args.events), prefs, now)
         write_page(render_page(recs, prefs, now), args.out)
         print(f"{len(recs)}件を {args.out} に書き出しました")
+    elif args.cmd == "notify":
+        notify(recommend(load_events(args.events), prefs, now), args.url, now)
     elif args.cmd == "suggest":
         prefs = replace(
             prefs,

@@ -32,3 +32,11 @@ Python 3.11 以上と Node.js が必要です（外部ライブラリは不要�
 `.github/workflows/daily.yml` が毎朝 6:45（日本時間）に始まり、7時ごろまでに取得 → 生成 → GitHub Pages へ公開します（GitHub の混雑で数分〜十数分遅れることがあります）。
 動かすには、このワークフローがデフォルトブランチ（main）にあることと、リポジトリの Settings → Pages で Source を「GitHub Actions」にすることが必要です。
 Actions タブの「Run workflow」から手動でも実行できます。
+
+## LINE通知（任意）
+
+毎朝の更新が終わると、上位3件とページのURLをLINEに送ります。
+LINE Developers で Messaging API のチャネルを作り、リポジトリの Settings → Secrets and variables → Actions に次の2つを登録すると有効になります（未登録なら通知は自動でスキップされます）。
+
+- `LINE_CHANNEL_ACCESS_TOKEN`: チャネルアクセストークン（長期）
+- `LINE_USER_ID`: 自分のユーザーID（チャネルの「Your user ID」）

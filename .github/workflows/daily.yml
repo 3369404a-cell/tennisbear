@@ -28,6 +28,10 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: events
+          path: data/events.json
 
   deploy:
     needs: build
@@ -35,9 +39,30 @@ jobs:
     permissions:
       pages: write
       id-token: write
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  notify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: events
+          path: data
+      - run: python -m tennisbear notify --events data/events.json --url "${{ needs.deploy.outputs.page_url }}"
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
