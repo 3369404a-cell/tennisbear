@@ -11,47 +11,41 @@ jobs:
     steps:
       - name: Probe
         run: |
-          pip install -q pypdf
+          cat > nuxt.js <<'JS'
+          // HTML 中の window.__NUXT__ を隔離した vm で評価して JSON で出力する
+          const fs = require("fs"), vm = require("vm");
+          const html = fs.readFileSync(process.argv[2], "utf8");
+          const m = html.match(/<script>(window\.__NUXT__=[\s\S]*?)<\/script>/);
+          const ctx = { window: {} };
+          vm.runInNewContext(m[1], ctx, { timeout: 2000 });
+          process.stdout.write(JSON.stringify(ctx.window.__NUXT__));
+          JS
+          UA="Mozilla/5.0 (compatible; personal-event-digest)"
+          B=https://www.tennisbear.net
+          get() { curl -sS -A "$UA" "$1" -o "$2"; sleep 10; }
+          get $B/event/prefecture/pref14 list.html
+          get "$B/event/prefecture/pref14?date=2026-10-31" list_date.html
+          get "$B/event/prefecture/pref14?page=2" list_page2.html
+          get $B/event/1687562/info detail.html
+          for f in list list_date list_page2 detail; do node nuxt.js $f.html > $f.json; done
           python3 - <<'PY'
-          import json, re, urllib.request, io
-          UA = "Mozilla/5.0 (compatible; personal-event-digest)"
-          def get(u):
-              req = urllib.request.Request(u, headers={"User-Agent": UA})
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return r.read()
-          B = "https://www.tennisbear.net"
-          print("##### robots.txt"); print(get(B + "/robots.txt").decode()[:2000])
-
-          from pypdf import PdfReader
-          t = "".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(get(B + "/pdf/terms-of-service_5.pdf"))).pages)
-          print("##### terms: clauses mentioning scraping/automation")
-          for m in re.finditer(r"[^。\n]*(スクレイピング|クローラ|自動的|自動化|ロボット|プログラム|複製|転載|収集)[^。\n]*。?", t):
-              print("-", m.group(0).strip())
-
-          def show(u):
-              s = get(u).decode("utf-8", "replace")
-              print(f"##### {u} ({len(s)} chars)")
-              for i, m in enumerate(re.finditer(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', s, re.S)):
-                  print(f"--- ld+json {i}:", m.group(1)[:2500])
-              print("--- pagination/query links:", sorted(set(re.findall(r'href="([^"]*(?:page|\?)[^"]*)"', s)))[:30])
-              n = s.find("window.__NUXT__")
-              print("--- __NUXT__ head:", s[n:n+1500] if n >= 0 else None)
-              print("--- __NUXT__ tail:", s[s.find("</script>", n)-2500:s.find("</script>", n)] if n >= 0 else None)
-              body = re.sub(r"(?s)<(script|style)[^>]*>.*?</\1>", "", s)
-              text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
-              print("--- text:", text[:2500])
-              return s
-          s = show(B + "/event/prefecture/pref14")
-          ids = re.findall(r'/event/(\d+)/info', s)
-          print("event ids on page:", len(ids), ids[:5])
-          show(B + f"/event/{ids[0]}/info")
-
-          # Nuxt のJSからAPIのURLらしきものを探す
-          js = sorted(set(re.findall(r'src="(/_nuxt/[^"]+\.js)"', s)))
-          found = set()
-          for j in js:
-              src = get(B + j).decode("utf-8", "replace")
-              found |= set(re.findall(r'https?://[a-zA-Z0-9.-]*tennisbear[a-zA-Z0-9.-]*(?:/[a-zA-Z0-9_/.-]*)?', src))
-              found |= set(m for m in re.findall(r'["\'`](/(?:api|v\d)/[a-zA-Z0-9_/.${}-]*event[a-zA-Z0-9_/.${}-]*)', src))
-          print("##### api-like urls in js"); [print(f) for f in sorted(found)[:80]]
+          import json, re
+          def walk(o, path=""):
+              if isinstance(o, dict):
+                  for k, v in o.items(): yield from walk(v, f"{path}.{k}")
+              elif isinstance(o, list) and o:
+                  yield path, o
+                  yield from walk(o[0], path + "[0]")
+          for f in ["list", "list_date", "list_page2"]:
+              d = json.load(open(f + ".json"))
+              print("#####", f, "fetch keys:", list(d["fetch"].keys()))
+              lists = [(p, v) for p, v in walk(d) if isinstance(v[0], dict) and ("startDatetime" in v[0] or "eventId" in v[0] or "title" in v[0]) and "advertising" not in p]
+              for p, v in lists:
+                  print(p, len(v), "first start:", v[0].get("startDatetime"), "last:", v[-1].get("startDatetime"))
+              if f == "list" and lists:
+                  print("--- sample list item:"); print(json.dumps(lists[0][1][0], ensure_ascii=False, indent=1)[:4000])
+          d = json.load(open("detail.json"))
+          st = {k: v for k, v in d["state"].items() if k != "global"}
+          print("##### detail state (non-global):"); print(json.dumps(st, ensure_ascii=False, indent=1)[:12000])
+          print("##### detail data/fetch:"); print(json.dumps({"data": d["data"], "fetch": d["fetch"]}, ensure_ascii=False)[:6000])
           PY
